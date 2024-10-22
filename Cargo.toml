@@ -1,0 +1,21 @@
+[package]
+name = "mmap-shim"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[build-dependencies]
+cc = { version = "1.0", features = ["parallel"] }
+build_cfg = "1.1.0"
+
+[dependencies]
+errno = "0.3.9"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+clap = { version = "4.5.20", features = ["derive"] }
+memmap = "0.7.0"
+
+[alias]
+t = "test -- --test-threads=1"

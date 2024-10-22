@@ -24,7 +24,7 @@ struct Args {
 
     /// Disable Transparent Huge Pages
     #[arg(short, long)]
-    disable_thp: bool
+    disable_thp: bool,
 }
 
 struct Prand<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> {
@@ -56,14 +56,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         y: 7,
         z: 13,
     };
-    let stderr_fd = std::io::stderr().as_raw_fd() as i64;
+    let stats_fd = 3i64;
 
     let pa0 = unsafe { counter::create_counters() };
 
     if args.disable_thp {
-        let val: libc::c_ulong = 1;
-        let nval: libc::c_ulong = 0;
-        let res = unsafe {libc::prctl(libc::PR_SET_THP_DISABLE, 1, 0, 0, 0)};
+        let res = unsafe { libc::prctl(libc::PR_SET_THP_DISABLE, 1, 0, 0, 0) };
         if res != 0 {
             let e = errno();
             eprintln!("res was {}", res);
@@ -74,9 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Setup pointer sizes
-    let pointer_slice: *mut u8;
     let pointer = unsafe { sigsegv::find_free_mem(args.size_buffer)? };
-    pointer_slice = pointer as *mut u8;
+    let pointer_slice = pointer as *mut u8;
     let file = unsafe { File::from_raw_fd(std::io::stderr().as_raw_fd()) };
     sigsegv::initialize(pa0, pointer, args.size_buffer, Some(file))?;
     let slice: &mut [usize] = unsafe {
@@ -87,10 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Initialize Timer
-    if args.enabled {
-        timer_sampler::initialize(pa0, stderr_fd);
+    if args.timer {
+        timer_sampler::initialize(pa0, stats_fd);
     } else {
-        timer_sampler::initialize_no_timer(stderr_fd);
+        timer_sampler::initialize_no_timer(pa0, stats_fd);
     }
 
     let size = slice.len();
@@ -101,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     timer_sampler::finalize();
 
     for i in 0..(size / (1 << 9)) {
-        println!("{:?}", slice[i]);
+        println!("{:?}", slice[i * (1usize << 9)]);
     }
     Ok(())
 }

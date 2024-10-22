@@ -111,11 +111,11 @@ pub mod timer_sampler {
         }
     }
 
-    pub fn initialize_no_timer(output_fd: i64) {
+    pub fn initialize_no_timer(pa0: PassAround, output_fd: i64) {
         unsafe {
             let num_counters = size_counters();
             SINGLE_ALARM_HANDLER = AlarmHandler {
-                pa0: create_counters(),
+                pa0,
                 output_fd,
                 buffer: Vec::<u64>::with_capacity(num_counters as usize),
             };
@@ -145,10 +145,11 @@ pub mod timer_sampler {
 pub mod sigsegv {
     use crate::counter::counter::{create_empty, PassAround};
     use crate::counter::{start_counters, stop_counters};
+    use errno::errno;
     use libc::{
         mmap, munmap, sigaction, sigaddset, sigemptyset, sighandler_t, siginfo_t, sigset_t,
-        MAP_ANON, MAP_FAILED, MAP_FIXED, MAP_POPULATE, MAP_PRIVATE, PROT_READ, PROT_WRITE,
-        SA_SIGINFO, SIGPROF, SIGSEGV,
+        MAP_ANON, MAP_FAILED, MAP_FIXED_NOREPLACE, MAP_POPULATE, MAP_PRIVATE, PROT_READ,
+        PROT_WRITE, SA_SIGINFO, SIGPROF, SIGSEGV,
     };
     use std::fs::File;
     use std::io::Write;
@@ -199,57 +200,77 @@ pub mod sigsegv {
                     ptr,
                     len,
                     PROT_READ | PROT_WRITE,
-                    default_mmap_flags() | MAP_FIXED | MAP_POPULATE,
+                    default_mmap_flags() | MAP_FIXED_NOREPLACE | MAP_POPULATE,
                     -1,
                     0,
                 )
             {
+                let e = errno();
+                eprintln!("mmap had Error {}: {}", e.0, e);
+                let mut rlim: libc::rlimit = MaybeUninit::zeroed().assume_init();
+                let _rc = libc::getrlimit(libc::RLIMIT_AS, &mut rlim);
+                eprintln!(
+                    "getrlimit RLIMIT_AS soft:\t{:#x};\thard:\t{:#x}",
+                    rlim.rlim_cur, rlim.rlim_max
+                );
+                let _rc = libc::getrlimit(libc::RLIMIT_RSS, &mut rlim);
+                eprintln!(
+                    "getrlimit RLIMIT_RSS soft:\t{:#x};\thard:\t{:#x}",
+                    rlim.rlim_cur, rlim.rlim_max
+                );
+                let _rc = libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut rlim);
+                eprintln!(
+                    "getrlimit RLIMIT_MEMLOCK soft:\t{:#x};\thard:\t{:#x}",
+                    rlim.rlim_cur, rlim.rlim_max
+                );
                 return Err("Mmap Error");
             }
             Ok(())
         }
     }
 
-    pub fn signal_handler(signo: c_int, si: *mut siginfo_t, _: *mut c_void) {
+    pub unsafe fn signal_handler(signo: c_int, si: *mut siginfo_t, _: *mut c_void) {
         match signo {
             SIGSEGV => {
                 let vfa: *mut c_void;
-                unsafe {
-                    stop_counters(SIGSEGV_HANDLER.pa0);
-                    if si == std::ptr::null_mut() {
-                        panic!("siginfo_t is null");
-                    }
-                    vfa = (*si).si_addr();
-
-                    // Print vfa
-                    if let Some(out_file) = &mut SIGSEGV_HANDLER.output_file {
-                        let res = out_file.write_fmt(format_args!("{:#50x}\tvfa\n", vfa as usize));
-                        match res {
-                            Err(_) => {
-                                panic!("Failed to print vfa");
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // Align address
-                    let ufa = vfa as usize;
-                    let afa = ((ufa >> 12) << 12) as *mut c_void;
-
-                    // Check address
-                    let attempt = afa as usize;
-                    let lower_bound = SIGSEGV_HANDLER.pointer as usize;
-                    let size = SIGSEGV_HANDLER.size;
-                    if lower_bound < attempt || (attempt - lower_bound) > size {
-                        panic!("TRUE SIGSEGV");
-                    }
-
-                    // mmap at that address
-                    if let Err(err) = call_mmap(afa, 1usize << 12, false) {
-                        panic!("{:?} - {:?}", err, vfa);
-                    }
-                    start_counters(SIGSEGV_HANDLER.pa0);
+                stop_counters(SIGSEGV_HANDLER.pa0);
+                if si == std::ptr::null_mut() {
+                    panic!("siginfo_t is null");
                 }
+                vfa = (*si).si_addr();
+
+                // Print vfa
+                if let Some(out_file) = &mut SIGSEGV_HANDLER.output_file {
+                    let res = out_file.write_fmt(format_args!("{:#x}\tvfa\n", vfa as usize));
+                    match res {
+                        Err(_) => {
+                            panic!("Failed to print vfa");
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Align address
+                let ufa = vfa as usize;
+                let afa = ((ufa >> 12) << 12) as *mut c_void;
+
+                // Check address
+                let attempt = afa as usize;
+                let lower_bound = SIGSEGV_HANDLER.pointer as usize;
+                let size = SIGSEGV_HANDLER.size;
+                if lower_bound > attempt || (attempt - lower_bound) >= size {
+                    eprintln!(
+                        "afa: {:?} - lower_bound: {:?} - size: {:#x}",
+                        afa, SIGSEGV_HANDLER.pointer, size,
+                    );
+                    panic!("TRUE SIGSEGV");
+                }
+
+                // mmap at that address
+                if let Err(err) = call_mmap(afa, 1usize << 12, false) {
+                    panic!("{:?} - {:?}", err, vfa);
+                }
+                start_counters(SIGSEGV_HANDLER.pa0);
             }
             _ => {
                 exit(-1);

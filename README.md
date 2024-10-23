@@ -1,7 +1,7 @@
 # User Learned Pager
 
 ## Build Instructions
-Just run `make all`, you may have to enable more pages for mmap with `sysctl`.
+Just run `make all`, you may have to enable more pages for mmap with `sysctl` (this should happen automatically in the makefile).
 
 ## Examples
 

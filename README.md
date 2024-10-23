@@ -1,5 +1,8 @@
 # User Learned Pager
 
+## Build Instructions
+Just run `make all`, you may have to enable more pages for mmap with `sysctl`.
+
 ## Examples
 
 ### Gups
@@ -10,7 +13,7 @@ Fault addresses go to standard error.
 
 Gups Variant to check overheads
 
-```bash
+```
 Gups Variant to check overheads
 
 Usage: gups [OPTIONS] [FUNCTION_TYPE] > /dev/null 2> vfa.stats 3> tlb.stats

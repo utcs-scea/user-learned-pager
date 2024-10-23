@@ -1,10 +1,17 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use errno::errno;
 use mmap_shim::counter;
 use mmap_shim::{sigsegv, timer_sampler};
 use std::fs::File;
 use std::ops::{BitXorAssign, Shl, Shr};
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(ValueEnum, Clone, Debug)]
+enum GupsFunction {
+    ShiftXor,
+    PhaseShifting,
+}
 
 /// Gups Variant to check overheads
 #[derive(Parser, Debug)]
@@ -25,16 +32,21 @@ struct Args {
     /// Disable Transparent Huge Pages
     #[arg(short, long)]
     disable_thp: bool,
+
+    /// Function that should be used
+    #[clap(value_enum, default_value_t=GupsFunction::ShiftXor)]
+    function_type: GupsFunction,
 }
 
-struct Prand<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> {
+#[derive(Clone)]
+struct ShiftXor<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> {
     x: T,
     y: T,
     z: T,
     w: T,
 }
 
-impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> Prand<T> {
+impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> ShiftXor<T> {
     fn simplerand(&mut self) -> T {
         let mut t: T = self.x;
         t ^= t << 11;
@@ -48,14 +60,10 @@ impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> Prand<T
     }
 }
 
+static STREAM: AtomicBool = AtomicBool::new(false);
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let mut prand = Prand {
-        w: 1,
-        x: 4,
-        y: 7,
-        z: 13,
-    };
     let stats_fd = 3i64;
 
     let pa0 = unsafe { counter::create_counters() };
@@ -85,14 +93,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Timer
     if args.timer {
-        timer_sampler::initialize(pa0, stats_fd);
+        timer_sampler::initialize(pa0, stats_fd, None);
     } else {
         timer_sampler::initialize_no_timer(pa0, stats_fd);
     }
-
     let size = slice.len();
-    for _ in 0..args.num_attempts {
-        slice[prand.simplerand() % size] ^= prand.simplerand();
+
+    let mut prand = ShiftXor {
+        w: 1,
+        x: 4,
+        y: 7,
+        z: 13,
+    };
+
+    match args.function_type {
+        GupsFunction::ShiftXor => {
+            for _ in 0..args.num_attempts {
+                slice[prand.simplerand() % size] ^= prand.simplerand();
+            }
+        }
+        GupsFunction::PhaseShifting => {
+            let mut stream_offset: usize = 0;
+            for _ in 0..args.num_attempts {
+                match STREAM.load(Ordering::Relaxed) {
+                    false => slice[prand.simplerand() % size] ^= prand.simplerand(),
+                    true => {
+                        stream_offset += 1usize << 12;
+                        prand.simplerand();
+                        slice[stream_offset % size] ^= prand.simplerand();
+                    }
+                }
+            }
+        }
     }
 
     timer_sampler::finalize();

@@ -14,12 +14,14 @@ pub mod timer_sampler {
         pa0: PassAround,
         output_fd: i64,
         buffer: Vec<u64>,
+        func: Option<Box<dyn FnMut() -> ()>>,
     }
 
     static mut SINGLE_ALARM_HANDLER: AlarmHandler = AlarmHandler {
         pa0: create_empty(),
         output_fd: -1,
         buffer: Vec::<u64>::new(),
+        func: None,
     };
 
     static mut HANDLER_ALLOWED: AtomicBool = AtomicBool::new(false);
@@ -61,6 +63,10 @@ pub mod timer_sampler {
                         SINGLE_ALARM_HANDLER.output_fd,
                         SINGLE_ALARM_HANDLER.buffer.as_mut_ptr(),
                     );
+                    match &mut SINGLE_ALARM_HANDLER.func {
+                        Some(boxed_func) => boxed_func(),
+                        _ => {}
+                    }
                 }
                 call_setitimer();
                 unsafe {
@@ -73,13 +79,18 @@ pub mod timer_sampler {
         }
     }
 
-    pub fn initialize(pa0: PassAround, output_fd: i64) -> PassAround {
+    pub fn initialize(
+        pa0: PassAround,
+        output_fd: i64,
+        func: Option<Box<dyn FnMut() -> ()>>,
+    ) -> PassAround {
         unsafe {
             let num_counters = size_counters();
             SINGLE_ALARM_HANDLER = AlarmHandler {
                 pa0,
                 output_fd,
                 buffer: Vec::<u64>::with_capacity(num_counters as usize),
+                func,
             };
             HANDLER_ALLOWED = true.into();
             HANDLER_FINALIZED = false.into();
@@ -99,6 +110,7 @@ pub mod timer_sampler {
                 pa0: create_counters(),
                 output_fd,
                 buffer: Vec::<u64>::with_capacity(num_counters as usize),
+                func: None,
             };
             HANDLER_ALLOWED = true.into();
             HANDLER_FINALIZED = false.into();
@@ -118,6 +130,7 @@ pub mod timer_sampler {
                 pa0,
                 output_fd,
                 buffer: Vec::<u64>::with_capacity(num_counters as usize),
+                func: None,
             };
             HANDLER_ALLOWED = false.into();
             HANDLER_FINALIZED = true.into();

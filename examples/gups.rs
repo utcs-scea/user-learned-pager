@@ -97,7 +97,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Timer
     if args.timer {
-        timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), None);
+        match args.function_type {
+            GupsFunction::PhaseShifting => {
+                let f =
+                    Box::new(|| STREAM.store(!STREAM.load(Ordering::Relaxed), Ordering::Relaxed));
+                timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), Some(f));
+            }
+            _ => {
+                timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), None);
+            }
+        }
     } else {
         timer_sampler::initialize_no_timer(pa0, stats_fd);
     }

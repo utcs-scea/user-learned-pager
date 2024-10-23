@@ -1,5 +1,6 @@
 
 all: env.tmp
+	cargo fmt
 	cargo build --release
 	cargo build --release --examples
 	cargo build

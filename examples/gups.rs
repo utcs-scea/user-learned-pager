@@ -29,6 +29,10 @@ struct Args {
     #[arg(short, long)]
     timer: bool,
 
+    /// Microseconds of Timer Signal
+    #[arg(short, long)]
+    usecs: i64,
+
     /// Disable Transparent Huge Pages
     #[arg(short, long)]
     disable_thp: bool,
@@ -93,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Timer
     if args.timer {
-        timer_sampler::initialize(pa0, stats_fd, None);
+        timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), None);
     } else {
         timer_sampler::initialize_no_timer(pa0, stats_fd);
     }

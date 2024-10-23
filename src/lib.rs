@@ -27,7 +27,7 @@ pub mod timer_sampler {
     static mut HANDLER_ALLOWED: AtomicBool = AtomicBool::new(false);
     static mut HANDLER_FINALIZED: AtomicBool = AtomicBool::new(false);
 
-    const TIMER: itimerval = itimerval {
+    static mut TIMER: itimerval = itimerval {
         it_interval: timeval {
             tv_sec: 0,
             tv_usec: 0,
@@ -40,7 +40,7 @@ pub mod timer_sampler {
 
     fn call_setitimer() {
         unsafe {
-            let times: *const itimerval = &TIMER;
+            let times: *const itimerval = std::ptr::addr_of!(TIMER);
             let no_times: *const itimerval = std::ptr::null();
             let rc = syscall(SYS_setitimer, ITIMER_PROF, times, no_times);
             if rc != 0 {
@@ -82,6 +82,7 @@ pub mod timer_sampler {
     pub fn initialize(
         pa0: PassAround,
         output_fd: i64,
+        useconds: Option<i64>,
         func: Option<Box<dyn FnMut() -> ()>>,
     ) -> PassAround {
         unsafe {
@@ -95,6 +96,11 @@ pub mod timer_sampler {
             HANDLER_ALLOWED = true.into();
             HANDLER_FINALIZED = false.into();
             libc::signal(SIGPROF, signal_handler as usize);
+        }
+        if let Some(usec) = useconds {
+            unsafe {
+                TIMER.it_value.tv_usec = usec;
+            }
         }
         call_setitimer();
         unsafe {

@@ -66,6 +66,7 @@ impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> ShiftXo
 
 static STREAM: AtomicBool = AtomicBool::new(false);
 
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let stats_fd = 3i64;
@@ -99,8 +100,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.timer {
         match args.function_type {
             GupsFunction::PhaseShifting => {
+                let count : Box<u64> = Box::new(0);
+                let count_ref : &'static mut u64 = Box::leak(count);
                 let f =
-                    Box::new(|| STREAM.store(!STREAM.load(Ordering::Relaxed), Ordering::Relaxed));
+                    Box::new(|| {
+                        if *count_ref % 10 == 0 {
+                            STREAM.store(!STREAM.load(Ordering::Relaxed), Ordering::Relaxed)
+                        }
+                        *count_ref += 1;
+                    });
                 timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), Some(f));
             }
             _ => {

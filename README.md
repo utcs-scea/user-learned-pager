@@ -1,7 +1,14 @@
 # User Learned Pager
 
 ## Build Instructions
+
 Just run `make all`, you may have to enable more pages for mmap with `sysctl` (this should happen automatically in the makefile).
+
+## Ideas and Advice
+
+Changing `src/perf/counter.c` will allow you to capture the counts you wanted.
+using `scripts/perf_type_config.sh` should help you fill in the blanks on your machine.
+THIS IS REQUIRED FOR ANYTHING THAT IS ARCH SPECIFIC.
 
 ## Examples
 

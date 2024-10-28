@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 enum GupsFunction {
     ShiftXor,
     PhaseShifting,
+    MatrixMultiplication
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
@@ -71,6 +72,20 @@ impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> ShiftXo
     }
 }
 
+fn matrix_multiply(size: usize) -> Vec<Vec<f64>> {
+    let a = vec![vec![1.0; size]; size];
+    let b = vec![vec![1.0; size]; size];
+    let mut c = vec![vec![0.0; size]; size];
+
+    for i in 0..size {
+        for j in 0..size {
+            for k in 0..size {
+                c[i][j] += a[i][k] * b[k][j];
+            }
+        }
+    }
+    c
+}
 static STREAM: AtomicBool = AtomicBool::new(false);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -156,6 +171,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        }
+        GupsFunction::MatrixMultiplication => {
+            let matrix_size = 100;
+            let _result = matrix_multiply(matrix_size);
+            // println!("")
         }
     }
 

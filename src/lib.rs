@@ -1,4 +1,5 @@
 pub mod counter;
+extern crate bitvector;
 
 pub mod timer_sampler {
     use crate::counter::counter::{create_empty, PassAround};
@@ -164,11 +165,12 @@ pub mod timer_sampler {
 pub mod sigsegv {
     use crate::counter::counter::{create_empty, PassAround};
     use crate::counter::{start_counters, stop_counters};
+    use bitvector::BitVector;
     use errno::errno;
     use libc::{
         mmap, munmap, sigaction, sigaddset, sigemptyset, sighandler_t, siginfo_t, sigset_t,
-        MAP_ANON, MAP_FAILED, MAP_FIXED_NOREPLACE, MAP_POPULATE, MAP_PRIVATE, PROT_READ,
-        PROT_WRITE, SA_SIGINFO, SIGPROF, SIGSEGV,
+        MAP_ANON, MAP_FAILED, MAP_FIXED_NOREPLACE, MAP_HUGETLB, MAP_HUGE_2MB, MAP_POPULATE,
+        MAP_PRIVATE, PROT_READ, PROT_WRITE, SA_SIGINFO, SIGPROF, SIGSEGV,
     };
     use std::fs::File;
     use std::io::Write;
@@ -181,7 +183,7 @@ pub mod sigsegv {
             std::ptr::null_mut(),
             size,
             PROT_READ | PROT_WRITE,
-            default_mmap_flags(),
+            default_mmap_flags() | MAP_HUGETLB | MAP_HUGE_2MB,
             -1,
             0,
         );
@@ -199,6 +201,8 @@ pub mod sigsegv {
         pointer: *mut c_void,
         size: usize,
         output_file: Option<File>,
+        map: Option<&'static mut BitVector>,
+        pick_huge: Option<Box<dyn FnMut() -> bool>>,
     }
 
     static mut SIGSEGV_HANDLER: SigSegvHandler = SigSegvHandler {
@@ -206,20 +210,27 @@ pub mod sigsegv {
         pointer: std::ptr::null_mut(),
         size: 0,
         output_file: None,
+        map: None,
+        pick_huge: None,
     };
 
     pub const fn default_mmap_flags() -> c_int {
         MAP_PRIVATE | MAP_ANON
     }
 
-    pub fn call_mmap(ptr: *mut c_void, len: usize, _map_huge: bool) -> Result<(), &'static str> {
+    pub fn call_mmap(ptr: *mut c_void, len: usize, map_huge: bool) -> Result<(), &'static str> {
+        let huge_flags = if map_huge {
+            MAP_HUGETLB | MAP_HUGE_2MB
+        } else {
+            0
+        };
         unsafe {
             if MAP_FAILED
                 == mmap(
                     ptr,
                     len,
                     PROT_READ | PROT_WRITE,
-                    default_mmap_flags() | MAP_FIXED_NOREPLACE | MAP_POPULATE,
+                    default_mmap_flags() | MAP_FIXED_NOREPLACE | MAP_POPULATE | huge_flags,
                     -1,
                     0,
                 )
@@ -269,9 +280,16 @@ pub mod sigsegv {
                     }
                 }
 
+                let map_huge = match &mut SIGSEGV_HANDLER.pick_huge {
+                    None => false,
+                    Some(boxed_func) => boxed_func(),
+                };
+
+                let shift = if map_huge { 21 } else { 12 };
+
                 // Align address
                 let ufa = vfa as usize;
-                let afa = ((ufa >> 12) << 12) as *mut c_void;
+                let afa = ((ufa >> shift) << shift) as *mut c_void;
 
                 // Check address
                 let attempt = afa as usize;
@@ -286,8 +304,16 @@ pub mod sigsegv {
                 }
 
                 // mmap at that address
-                if let Err(err) = call_mmap(afa, 1usize << 12, false) {
+                if let Err(err) = call_mmap(afa, 1usize << shift, map_huge) {
                     panic!("{:?} - {:?}", err, vfa);
+                }
+                match &mut SIGSEGV_HANDLER.map {
+                    Some(map) => {
+                        let base = SIGSEGV_HANDLER.pointer as usize >> 21;
+                        let offset = (attempt >> 21) - base;
+                        map.insert(offset * 2);
+                    }
+                    None => {}
                 }
                 start_counters(SIGSEGV_HANDLER.pa0);
             }
@@ -302,13 +328,18 @@ pub mod sigsegv {
         pointer: *mut c_void,
         size: usize,
         output_file: Option<File>,
+        pick_huge: Option<Box<dyn FnMut() -> bool>>,
     ) -> Result<(), &'static str> {
+        let bitvector = Box::new(BitVector::new(size / (1 << 20))); // 2MB offsets then multiply by 2
+        let bitvector_ref: &'static mut BitVector = Box::leak(bitvector);
         unsafe {
             SIGSEGV_HANDLER = SigSegvHandler {
                 pa0,
                 pointer,
                 size,
                 output_file,
+                map: Some(bitvector_ref),
+                pick_huge,
             };
             // Make sigset
             let mut sa_mask: sigset_t = MaybeUninit::zeroed().assume_init();
@@ -346,10 +377,10 @@ mod tests {
         let sigsegv_file = tempfile()?;
         let sigsegv_clone = sigsegv_file.try_clone()?;
         assert_eq!(sigsegv_file.metadata()?.len(), 0);
-        let size = 1usize << 12;
+        let size = 1usize << 21;
         let pointer_void = unsafe { sigsegv::find_free_mem(size)? };
 
-        sigsegv::initialize(pa, pointer_void, size, Some(sigsegv_file))?;
+        sigsegv::initialize(pa, pointer_void, size, Some(sigsegv_file), None)?;
 
         unsafe {
             let pointer = pointer_void as *mut u8;

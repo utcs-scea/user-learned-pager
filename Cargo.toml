@@ -9,6 +9,7 @@ cc = { version = "1.0", features = ["parallel"] }
 build_cfg = "1.1.0"
 
 [dependencies]
+bitvector = "0.1.5"
 errno = "0.3.9"
 libc = "0.2"
 

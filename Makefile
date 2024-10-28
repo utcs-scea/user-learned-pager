@@ -6,4 +6,6 @@ all: env.tmp
 	cargo build --examples
 
 env.tmp:
-	sudo sysctl -w vm.max_map_count=$(shell python3 -c "print(1<<30)") && touch $@
+	sudo sysctl -w vm.max_map_count=$(shell python3 -c "print(1<<30)") \
+	&& sudo sysctl -w vm.nr_hugepages=$(shell python3 -c "print(1<<30)") \
+	&& touch $@

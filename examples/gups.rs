@@ -13,6 +13,13 @@ enum GupsFunction {
     PhaseShifting,
 }
 
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+enum MapType {
+    Normal,
+    HugePagesOnly,
+    BasePagesOnly,
+}
+
 /// Gups Variant to check overheads
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -33,13 +40,13 @@ struct Args {
     #[arg(short, long)]
     usecs: i64,
 
-    /// Disable Transparent Huge Pages
-    #[arg(short, long)]
-    disable_thp: bool,
-
     /// Function that should be used
-    #[clap(value_enum, default_value_t=GupsFunction::ShiftXor)]
+    #[clap(short, long, value_enum, default_value_t=GupsFunction::ShiftXor)]
     function_type: GupsFunction,
+
+    /// Type of mapping that should be used
+    #[clap(short, long, value_enum, default_value_t=MapType::Normal)]
+    map_type: MapType,
 }
 
 #[derive(Clone)]
@@ -66,14 +73,19 @@ impl<T: Shl<u8, Output = T> + Shr<u8, Output = T> + BitXorAssign + Copy> ShiftXo
 
 static STREAM: AtomicBool = AtomicBool::new(false);
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let stats_fd = 3i64;
 
     let pa0 = unsafe { counter::create_counters() };
 
-    if args.disable_thp {
+    let map_func: Option<Box<dyn FnMut() -> bool>> = match args.map_type {
+        MapType::Normal => None,
+        MapType::HugePagesOnly => Some(Box::new(|| true)),
+        MapType::BasePagesOnly => Some(Box::new(|| false)),
+    };
+
+    if args.map_type == MapType::HugePagesOnly || args.map_type == MapType::BasePagesOnly {
         let res = unsafe { libc::prctl(libc::PR_SET_THP_DISABLE, 1, 0, 0, 0) };
         if res != 0 {
             let e = errno();
@@ -88,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pointer = unsafe { sigsegv::find_free_mem(args.size_buffer)? };
     let pointer_slice = pointer as *mut u8;
     let file = unsafe { File::from_raw_fd(std::io::stderr().as_raw_fd()) };
-    sigsegv::initialize(pa0, pointer, args.size_buffer, Some(file))?;
+    sigsegv::initialize(pa0, pointer, args.size_buffer, Some(file), map_func)?;
     let slice: &mut [usize] = unsafe {
         std::slice::from_raw_parts_mut(
             pointer_slice as *mut usize,
@@ -100,15 +112,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.timer {
         match args.function_type {
             GupsFunction::PhaseShifting => {
-                let count : Box<u64> = Box::new(0);
-                let count_ref : &'static mut u64 = Box::leak(count);
-                let f =
-                    Box::new(|| {
-                        if *count_ref % 10 == 0 {
-                            STREAM.store(!STREAM.load(Ordering::Relaxed), Ordering::Relaxed)
-                        }
-                        *count_ref += 1;
-                    });
+                let count: Box<u64> = Box::new(0);
+                let count_ref: &'static mut u64 = Box::leak(count);
+                let f = Box::new(|| {
+                    if *count_ref % 10 == 0 {
+                        STREAM.store(!STREAM.load(Ordering::Relaxed), Ordering::Relaxed)
+                    }
+                    *count_ref += 1;
+                });
                 timer_sampler::initialize(pa0, stats_fd, Some(args.usecs), Some(f));
             }
             _ => {
